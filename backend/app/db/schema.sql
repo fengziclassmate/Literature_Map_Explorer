@@ -65,6 +65,21 @@ CREATE TABLE IF NOT EXISTS paper_summaries (
 
 CREATE INDEX IF NOT EXISTS idx_paper_summaries_relevance ON paper_summaries(relevance_score);
 
+CREATE TABLE IF NOT EXISTS paper_pdfs (
+    paper_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'not_requested',
+    source TEXT,
+    pdf_url TEXT,
+    pdf_path TEXT,
+    file_size_bytes INTEGER,
+    error_message TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (paper_id) REFERENCES papers(paper_key) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_paper_pdfs_status ON paper_pdfs(status);
+
 CREATE TABLE IF NOT EXISTS project_papers (
     project_id TEXT NOT NULL,
     paper_key TEXT NOT NULL,

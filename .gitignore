@@ -12,4 +12,5 @@ literature_map.db
 dist/
 build/
 node_modules/
+downloads/
 backend/reports/

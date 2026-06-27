@@ -428,6 +428,59 @@ button:disabled {
   font-weight: 700;
 }
 
+.pdf-panel {
+  margin: 10px 0 4px;
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.pdf-panel h3 {
+  margin: 0 0 4px;
+  color: var(--green-ink);
+  font-size: 13px;
+}
+
+.pdf-panel p {
+  margin: 0;
+  color: #26302c;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.pdf-panel small {
+  display: block;
+  margin-top: 4px;
+  color: #7f1d1d;
+  line-height: 1.45;
+}
+
+.pdf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pdf-actions button,
+.pdf-actions a {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f7f8f6;
+  color: var(--green-ink);
+  font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
 .summary-field {
   border-top: 1px solid var(--line);
   padding: 10px 0;

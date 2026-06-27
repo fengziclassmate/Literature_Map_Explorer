@@ -427,6 +427,51 @@ def get_paper_summaries(paper_ids: Iterable[str]) -> dict[str, PaperSummary]:
     return {row["paper_id"]: PaperSummary(**dict(row)) for row in rows}
 
 
+def save_paper_pdf(
+    *,
+    paper_id: str,
+    status: str,
+    source: str | None = None,
+    pdf_url: str | None = None,
+    pdf_path: str | None = None,
+    file_size_bytes: int | None = None,
+    error_message: str | None = None,
+) -> dict:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO paper_pdfs(
+                paper_id, status, source, pdf_url, pdf_path, file_size_bytes, error_message
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(paper_id) DO UPDATE SET
+                status = excluded.status,
+                source = excluded.source,
+                pdf_url = excluded.pdf_url,
+                pdf_path = excluded.pdf_path,
+                file_size_bytes = excluded.file_size_bytes,
+                error_message = excluded.error_message,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (paper_id, status, source, pdf_url, pdf_path, file_size_bytes, error_message),
+        )
+    return get_paper_pdf(paper_id) or {"paper_id": paper_id, "status": status}
+
+
+def get_paper_pdf(paper_id: str) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT paper_id, status, source, pdf_url, pdf_path, file_size_bytes,
+                   error_message, created_at, updated_at
+            FROM paper_pdfs
+            WHERE paper_id = ?
+            """,
+            (paper_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def list_project_paper_cards(project_id: str) -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(
@@ -438,10 +483,16 @@ def list_project_paper_cards(project_id: str) -> list[dict]:
                    ps.limitations, ps.future_work, ps.relation_to_seed,
                    ps.relevance_score, ps.summary_confidence, ps.summary_level,
                    ps.raw_llm_output, ps.created_at AS summary_created_at,
-                   ps.updated_at AS summary_updated_at
+                   ps.updated_at AS summary_updated_at,
+                   pdf.paper_id AS pdf_paper_id, pdf.status AS pdf_status,
+                   pdf.source AS pdf_source, pdf.pdf_url AS pdf_url,
+                   pdf.pdf_path AS pdf_path, pdf.file_size_bytes AS pdf_file_size_bytes,
+                   pdf.error_message AS pdf_error_message,
+                   pdf.created_at AS pdf_created_at, pdf.updated_at AS pdf_updated_at
             FROM papers p
             JOIN project_papers pp ON pp.paper_key = p.paper_key
             LEFT JOIN paper_summaries ps ON ps.paper_id = p.paper_key
+            LEFT JOIN paper_pdfs pdf ON pdf.paper_id = p.paper_key
             WHERE pp.project_id = ?
             ORDER BY COALESCE(pp.depth, 999999), p.year, p.title
             """,
@@ -456,6 +507,7 @@ def list_project_paper_cards(project_id: str) -> list[dict]:
         card = {
             "paper": paper,
             "summary": None,
+            "pdf": None,
         }
         if data.get("paper_id"):
             card["summary"] = {
@@ -477,6 +529,18 @@ def list_project_paper_cards(project_id: str) -> list[dict]:
                 "raw_llm_output": data.get("raw_llm_output"),
                 "created_at": data.get("summary_created_at"),
                 "updated_at": data.get("summary_updated_at"),
+            }
+        if data.get("pdf_paper_id"):
+            card["pdf"] = {
+                "paper_id": data["pdf_paper_id"],
+                "status": data.get("pdf_status"),
+                "source": data.get("pdf_source"),
+                "pdf_url": data.get("pdf_url"),
+                "pdf_path": data.get("pdf_path"),
+                "file_size_bytes": data.get("pdf_file_size_bytes"),
+                "error_message": data.get("pdf_error_message"),
+                "created_at": data.get("pdf_created_at"),
+                "updated_at": data.get("pdf_updated_at"),
             }
         cards.append(card)
     return cards

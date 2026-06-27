@@ -78,6 +78,8 @@ Environment variables:
 - `LME_DATABASE_URL`: defaults to `sqlite:///./literature_map.db`
 - `LME_USER_AGENT`: user agent sent to external APIs
 - `LME_CONTACT_EMAIL`: optional OpenAlex mailto parameter
+- `LME_UNPAYWALL_EMAIL`: email used for Unpaywall open-access PDF lookup
+- `LME_PDF_DOWNLOAD_DIR`: local directory for saved open-access PDFs, defaults to `./downloads/pdfs`
 - `SEMANTIC_SCHOLAR_API_KEY`: optional Semantic Scholar API key
 - `LME_API_MAX_RETRIES`: defaults to `3`
 - `LME_API_CACHE_TTL_SECONDS`: defaults to one day
@@ -89,6 +91,7 @@ Environment variables:
 - Current seed input: DOI only.
 - Deduplication priority: DOI, then OpenAlex ID, then Semantic Scholar ID, then normalized title.
 - Citation edge direction: `source cites target`.
+- PDF fetching is open-access only by default. It uses existing metadata PDF URLs plus OpenAlex OA, Semantic Scholar OA, and Unpaywall. It intentionally does not enable Sci-Hub, LibGen, Tor, WebVPN, CARSI, EZProxy, or browser-based institutional login in the core app.
 - Crawl controls:
   - `max_depth_backward`: reference expansion depth
   - `max_depth_forward`: citing-paper expansion depth
@@ -119,6 +122,13 @@ Analyze graph structure:
 
 ```bash
 curl http://127.0.0.1:8000/graph/<project_id>/analysis
+```
+
+Fetch open-access PDF status or trigger a safe PDF download for a paper:
+
+```bash
+curl http://127.0.0.1:8000/papers/<paper_id>/pdf
+curl -X POST http://127.0.0.1:8000/papers/<paper_id>/pdf/download
 ```
 
 Export:

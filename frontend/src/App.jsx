@@ -7,7 +7,9 @@ import {
   CheckCircle2,
   CircleAlert,
   Clock3,
+  ExternalLink,
   FileText,
+  FileDown,
   GitBranch,
   Loader2,
   Network,
@@ -111,6 +113,10 @@ function normalizeProgress(stats = {}, maxPapersTotal = initialSettings.max_pape
   return progress;
 }
 
+function paperApiId(paperId) {
+  return encodeURIComponent(paperId || '');
+}
+
 function App() {
   const [settings, setSettings] = useState(initialSettings);
   const [project, setProject] = useState(null);
@@ -123,6 +129,7 @@ function App() {
   const [progress, setProgress] = useState(() => normalizeProgress());
   const [isRunning, setIsRunning] = useState(false);
   const [isReporting, setIsReporting] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
   const cyRef = useRef(null);
   const graphRef = useRef(null);
   const pollTokenRef = useRef(0);
@@ -306,6 +313,26 @@ function App() {
     }
   }
 
+  async function fetchSelectedPdf() {
+    const paperKey = selectedCard?.paper?.paper_key;
+    if (!paperKey) return;
+    setPdfBusy(true);
+    setError('');
+    setStatus('正在获取开放 PDF');
+    try {
+      const pdf = await request(`/papers/${paperApiId(paperKey)}/pdf/download`, { method: 'POST' });
+      setPaperCards((cards) => cards.map((card) => (
+        card.paper?.paper_key === paperKey ? { ...card, pdf } : card
+      )));
+      setStatus(pdf.status === 'downloaded' ? 'PDF 已保存' : '未找到开放 PDF');
+    } catch (err) {
+      setError(err.message || String(err));
+      setStatus('PDF 获取失败');
+    } finally {
+      setPdfBusy(false);
+    }
+  }
+
   const nodeCount = graph.nodes?.length || 0;
   const edgeCount = graph.edges?.length || 0;
   const cardCount = paperCards.filter((card) => card.summary).length;
@@ -418,7 +445,7 @@ function App() {
         </section>
 
         <aside className="paper-desk" aria-label="Paper Card">
-          <PaperCard card={selectedCard} />
+          <PaperCard card={selectedCard} onFetchPdf={fetchSelectedPdf} pdfBusy={pdfBusy} />
         </aside>
       </section>
 
@@ -515,7 +542,7 @@ function Metric({ icon, label, value }) {
   );
 }
 
-function PaperCard({ card }) {
+function PaperCard({ card, onFetchPdf, pdfBusy = false }) {
   const paper = card?.paper;
   const summary = card?.summary;
   if (!paper) {
@@ -547,6 +574,7 @@ function PaperCard({ card }) {
         <span>置信度 {formatNumber(summary?.summary_confidence)}</span>
         <span>{summary?.summary_level || '未总结'}</span>
       </div>
+      <PdfPanel paper={paper} pdf={card?.pdf} onFetchPdf={onFetchPdf} pdfBusy={pdfBusy} />
       <SummaryField label="一句话总结" value={summary?.one_sentence_summary} strong />
       <SummaryField label="研究问题" value={summary?.research_problem} />
       <SummaryField label="数据来源" value={summary?.data_sources} />
@@ -557,6 +585,41 @@ function PaperCard({ card }) {
       <SummaryField label="未来工作" value={summary?.future_work} />
       <SummaryField label="与种子论文关系" value={summary?.relation_to_seed} />
     </div>
+  );
+}
+
+function PdfPanel({ paper, pdf, onFetchPdf, pdfBusy }) {
+  const paperKey = paper?.paper_key || '';
+  const fileUrl = `${API_BASE}/papers/${paperApiId(paperKey)}/pdf/file`;
+  const canFetch = Boolean(paper?.doi || paper?.pdf_url);
+  const downloaded = pdf?.status === 'downloaded';
+  const statusText = {
+    downloaded: `已保存${pdf?.source ? ` · ${pdf.source}` : ''}`,
+    not_found: '未找到开放 PDF',
+    error: '获取失败',
+    not_requested: '尚未获取',
+  }[pdf?.status || 'not_requested'] || pdf?.status;
+
+  return (
+    <section className="pdf-panel">
+      <div>
+        <h3>全文 PDF</h3>
+        <p>{statusText}</p>
+        {pdf?.error_message && <small>{pdf.error_message}</small>}
+      </div>
+      <div className="pdf-actions">
+        <button type="button" onClick={onFetchPdf} disabled={pdfBusy || !canFetch}>
+          {pdfBusy ? <Loader2 className="spin" size={15} /> : <FileDown size={15} />}
+          <span>{pdfBusy ? '获取中' : '获取开放 PDF'}</span>
+        </button>
+        {downloaded && (
+          <a href={fileUrl} target="_blank" rel="noreferrer">
+            <ExternalLink size={15} />
+            <span>打开 PDF</span>
+          </a>
+        )}
+      </div>
+    </section>
   );
 }
 

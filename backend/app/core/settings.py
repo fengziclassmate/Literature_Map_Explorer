@@ -47,6 +47,8 @@ class Settings:
     request_timeout_seconds: float = _float_env("LME_REQUEST_TIMEOUT_SECONDS", 20.0)
     api_max_retries: int = _int_env("LME_API_MAX_RETRIES", 3)
     api_cache_ttl_seconds: int = _int_env("LME_API_CACHE_TTL_SECONDS", 60 * 60 * 24)
+    pdf_download_dir: str = os.getenv("LME_PDF_DOWNLOAD_DIR", "./downloads/pdfs")
+    unpaywall_email: str = os.getenv("LME_UNPAYWALL_EMAIL", os.getenv("LME_CONTACT_EMAIL", "research@example.local"))
 
     openalex_rate_limit_per_second: float = _float_env("LME_OPENALEX_RPS", 8.0)
     semantic_scholar_rate_limit_per_second: float = _float_env("LME_SEMANTIC_SCHOLAR_RPS", 1.0)
@@ -66,4 +68,3 @@ class Settings:
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
     return Settings()
-

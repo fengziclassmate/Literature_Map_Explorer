@@ -52,6 +52,25 @@ uvicorn app.main:app --reload
 
 Open `http://127.0.0.1:8000/docs`.
 
+## Run the Chinese Web UI
+
+Start the backend first:
+
+```bash
+cd backend
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+In a second terminal, start the frontend:
+
+```bash
+cd frontend
+pnpm install
+pnpm dev -- --port 5173
+```
+
+Open `http://127.0.0.1:5173` for the Chinese literature-map workspace. The backend API docs remain available at `http://127.0.0.1:8000/docs`.
+
 ## Configuration
 
 Environment variables:

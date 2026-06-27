@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.sqlite
+*.sqlite3
+*.db
+literature_map.db
+.env
+.pytest_cache/
+.ruff_cache/
+dist/
+build/
+node_modules/
+backend/reports/

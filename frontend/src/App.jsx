@@ -133,6 +133,8 @@ function App() {
   const cyRef = useRef(null);
   const graphRef = useRef(null);
   const pollTokenRef = useRef(0);
+  const restoredProjectRef = useRef(false);
+  const [recentProjects, setRecentProjects] = useState([]);
 
   const selectedCard = useMemo(() => {
     if (!selectedId) return paperCards[0] || null;
@@ -143,6 +145,12 @@ function App() {
     return () => {
       pollTokenRef.current += 1;
     };
+  }, []);
+
+  useEffect(() => {
+    if (restoredProjectRef.current) return;
+    restoredProjectRef.current = true;
+    loadRecentProjects({ restoreLatest: true });
   }, []);
 
   useEffect(() => {
@@ -207,7 +215,12 @@ function App() {
     });
     cy.on('tap', 'node', (event) => setSelectedId(event.target.id()));
     cyRef.current = cy;
-    return () => cy.destroy();
+    return () => {
+      if (cyRef.current === cy) {
+        cyRef.current = null;
+      }
+      cy.destroy();
+    };
   }, [graph]);
 
   async function loadProjectData(projectId, nextStatus = '已刷新') {
@@ -219,6 +232,31 @@ function App() {
     setPaperCards(cardsResponse.paper_cards || []);
     setSelectedId((cardsResponse.paper_cards || [])[0]?.paper?.paper_key || null);
     setStatus(nextStatus);
+  }
+
+  async function loadRecentProjects({ restoreLatest = false } = {}) {
+    try {
+      const projects = await request('/projects');
+      setRecentProjects(projects || []);
+      if (!restoreLatest || project || isRunning) return;
+      const latestComplete = (projects || []).find((item) => item.status === 'complete' && item.paper_count > 0);
+      if (latestComplete) {
+        await openProject(latestComplete.project_id, '已恢复最近结果');
+      }
+    } catch (err) {
+      console.warn('Failed to load recent projects', err);
+    }
+  }
+
+  async function openProject(projectId, nextStatus = '已打开历史项目') {
+    setError('');
+    setStatus('正在打开历史项目');
+    const statusResponse = await request(`/projects/${projectId}/status`);
+    if (statusResponse.project) setProject(statusResponse.project);
+    if (statusResponse.crawl_run?.stats) {
+      setProgress(normalizeProgress(statusResponse.crawl_run.stats, settings.max_papers_total));
+    }
+    await loadProjectData(projectId, nextStatus);
   }
 
   async function pollProjectStatus(projectId, pollToken, runSettings) {
@@ -268,6 +306,7 @@ function App() {
       });
       setProgress(normalizeProgress(created.crawl_run?.stats || {}, runSettings.max_papers_total));
       await pollProjectStatus(created.project_id, pollToken, runSettings);
+      await loadRecentProjects();
     } catch (err) {
       if (pollTokenRef.current === pollToken) {
         setError(err.message || String(err));
@@ -290,6 +329,7 @@ function App() {
         setProgress(normalizeProgress(statusResponse.crawl_run.stats, settings.max_papers_total));
       }
       await loadProjectData(project.project_id, '已刷新');
+      await loadRecentProjects();
     } catch (err) {
       setError(err.message || String(err));
       setStatus('刷新失败');
@@ -415,6 +455,13 @@ function App() {
             <span>刷新项目</span>
           </button>
 
+          <RecentProjects
+            projects={recentProjects}
+            activeProjectId={project?.project_id}
+            onOpen={openProject}
+            disabled={isRunning}
+          />
+
           <ProgressPanel progress={progress} isRunning={isRunning} />
 
           <div className="metric-stack">
@@ -439,7 +486,8 @@ function App() {
             </div>
             <span className="project-id">{project?.project_id || '尚未创建项目'}</span>
           </div>
-          <div className="network-canvas" ref={graphRef}>
+          <div className="network-frame">
+            <div className="network-canvas" ref={graphRef} />
             {!nodeCount && <div className="empty-state">输入 DOI 后生成文献地图</div>}
           </div>
         </section>
@@ -520,6 +568,33 @@ function ProgressPanel({ progress, isRunning }) {
       </div>
       {progress.truncated && <p className="progress-note">已达到论文上限，后续节点被跳过。</p>}
     </div>
+  );
+}
+
+function RecentProjects({ projects, activeProjectId, onOpen, disabled }) {
+  const visibleProjects = (projects || []).slice(0, 4);
+  if (!visibleProjects.length) return null;
+
+  return (
+    <section className="recent-projects">
+      <div className="recent-head">
+        <span>最近结果</span>
+      </div>
+      <div className="recent-list">
+        {visibleProjects.map((item) => (
+          <button
+            type="button"
+            className={item.project_id === activeProjectId ? 'active' : ''}
+            key={item.project_id}
+            onClick={() => onOpen(item.project_id)}
+            disabled={disabled}
+          >
+            <span>{item.name || item.seed_doi}</span>
+            <small>{item.status} · {formatNumber(item.paper_count)} 篇 · {formatNumber(item.edge_count)} 边</small>
+          </button>
+        ))}
+      </div>
+    </section>
   );
 }
 

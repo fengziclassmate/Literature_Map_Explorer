@@ -20,6 +20,7 @@ class GraphBuilder:
             keyed = paper.with_identity()
             graph.add_node(
                 keyed.paper_key,
+                label=self._node_label(keyed.title),
                 title=keyed.title,
                 doi=keyed.doi,
                 year=keyed.year,
@@ -152,6 +153,12 @@ class GraphBuilder:
             doi = attrs.get("doi") or "no DOI"
             lines.append(f"- {attrs.get('title')} ({year}) - {doi} [{paper_key}]")
         return "\n".join(lines) + "\n"
+
+    def _node_label(self, title: str) -> str:
+        title = re.sub(r"\s+", " ", title).strip()
+        if len(title) <= 72:
+            return title
+        return title[:69].rstrip() + "..."
 
     def _bibtex_key(self, title: str, year: int | None) -> str:
         words = re.findall(r"[A-Za-z0-9]+", title)

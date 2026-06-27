@@ -4,7 +4,8 @@ import json
 import logging
 from collections import deque
 from dataclasses import asdict, dataclass, field
-from typing import Any, Literal
+from datetime import datetime, timezone
+from typing import Any, Callable, Literal
 
 from app.db.database import create_project, get_connection, load_project_graph, save_paper_summary
 from app.models.citation import CitationEdge
@@ -16,6 +17,7 @@ from app.services.summarizer import PaperSummarizer
 logger = logging.getLogger(__name__)
 
 Direction = Literal["backward", "forward"]
+ProgressCallback = Callable[["CrawlSummary"], None]
 
 
 @dataclass(frozen=True)
@@ -31,6 +33,14 @@ class CrawlResult:
 class CrawlSummary:
     project_id: str
     seed_paper_id: str
+    current_stage: str = "starting"
+    current_paper_id: str | None = None
+    current_paper_title: str | None = None
+    discovered_papers_count: int = 0
+    processed_papers_count: int = 0
+    queued_papers_count: int = 0
+    max_papers_total: int = 0
+    progress_percent: int = 0
     new_papers_count: int = 0
     new_edges_count: int = 0
     failed_requests_count: int = 0
@@ -39,6 +49,7 @@ class CrawlSummary:
     summary_failed_count: int = 0
     visited_papers_count: int = 0
     truncated: bool = False
+    updated_at: str | None = None
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -74,6 +85,7 @@ class CitationCrawler:
         max_papers_total: int = 100,
         project_id: str | None = None,
         per_paper_limit: int = 50,
+        progress_callback: ProgressCallback | None = None,
     ) -> CrawlSummary:
         """Read a seed paper from SQLite, BFS-expand citations, and persist changes."""
         seed = self._load_seed_paper(seed_paper_id)
@@ -81,10 +93,17 @@ class CitationCrawler:
             raise ValueError(f"Seed paper not found in database: {seed_paper_id}")
 
         project_id = project_id or self._find_or_create_project(seed)
+        summary = CrawlSummary(
+            project_id=project_id,
+            seed_paper_id=seed.paper_key or canonical_paper_key(seed),
+            max_papers_total=max_papers_total,
+        )
+        self._emit_progress(summary, "enriching_seed", seed, progress_callback)
         seed = await self._enrich_paper(seed, summary=None)
         self._ensure_project_paper(project_id, seed, depth=0, direction="seed")
 
-        summary = CrawlSummary(project_id=project_id, seed_paper_id=seed.paper_key or canonical_paper_key(seed))
+        summary.seed_paper_id = seed.paper_key or canonical_paper_key(seed)
+        self._emit_progress(summary, "summarizing_seed", seed, progress_callback)
         await self._summarize_and_save(seed, seed, summary)
         queue: deque[tuple[Paper, Direction, int]] = deque()
         visited: set[tuple[str, Direction]] = set()
@@ -96,6 +115,7 @@ class CitationCrawler:
         if max_depth_forward > 0:
             queue.append((seed, "forward", 0))
             enqueued.add((summary.seed_paper_id, "forward"))
+        self._emit_progress(summary, "crawl_queued", seed, progress_callback, queued_count=len(queue))
 
         while queue:
             paper, direction, depth = queue.popleft()
@@ -106,13 +126,17 @@ class CitationCrawler:
                 continue
             visited.add(state)
             summary.visited_papers_count += 1
+            summary.processed_papers_count = summary.visited_papers_count
 
             max_depth = max_depth_backward if direction == "backward" else max_depth_forward
             if depth >= max_depth:
                 continue
 
+            stage = "fetching_references" if direction == "backward" else "fetching_citations"
+            self._emit_progress(summary, stage, paper, progress_callback, queued_count=len(queue))
             neighbors = await self._neighbors(paper, direction=direction, limit=per_paper_limit, summary=summary)
             for neighbor in neighbors:
+                self._emit_progress(summary, "enriching_paper", neighbor, progress_callback, queued_count=len(queue))
                 neighbor = await self._enrich_paper(neighbor, summary=summary)
                 neighbor = neighbor.with_identity()
                 neighbor_key = neighbor.paper_key or canonical_paper_key(neighbor)
@@ -134,8 +158,10 @@ class CitationCrawler:
                 else:
                     self._ensure_project_paper(project_id, neighbor, depth=depth + 1, direction=direction)
 
+                self._emit_progress(summary, "summarizing_paper", neighbor, progress_callback, queued_count=len(queue))
                 await self._summarize_and_save(seed, neighbor, summary)
                 summary.new_edges_count += self._save_edge(project_id, edge)
+                self._emit_progress(summary, "saving_edge", neighbor, progress_callback, queued_count=len(queue))
 
                 next_state = (neighbor_key, direction)
                 if depth + 1 < max_depth:
@@ -146,6 +172,7 @@ class CitationCrawler:
                         summary.skipped_papers_count += 1
 
         self._refresh_project_counts(project_id)
+        self._emit_progress(summary, "complete", seed, progress_callback, queued_count=0, complete=True)
         return summary
 
     async def crawl_from_doi(
@@ -157,6 +184,7 @@ class CitationCrawler:
         max_papers_total: int = 100,
         per_paper_limit: int = 50,
         project_id: str | None = None,
+        progress_callback: ProgressCallback | None = None,
     ) -> CrawlResult:
         """Compatibility wrapper that resolves a DOI and returns an in-memory crawl result."""
         seed = await self.resolver.resolve_doi(doi)
@@ -179,9 +207,44 @@ class CitationCrawler:
             max_papers_total=max_papers_total,
             project_id=project_id,
             per_paper_limit=per_paper_limit,
+            progress_callback=progress_callback,
         )
         papers, citations = load_project_graph(project_id)
         return CrawlResult(seed=seed, papers=papers, citations=citations, truncated=summary.truncated, summary=summary)
+
+    def _emit_progress(
+        self,
+        summary: CrawlSummary,
+        stage: str,
+        paper: Paper | None,
+        callback: ProgressCallback | None,
+        *,
+        queued_count: int = 0,
+        complete: bool = False,
+    ) -> None:
+        """Update the mutable crawl summary and notify an optional observer."""
+        summary.current_stage = stage
+        summary.queued_papers_count = queued_count
+        summary.updated_at = datetime.now(timezone.utc).isoformat()
+        if paper is not None:
+            paper_key = paper.paper_key or canonical_paper_key(paper)
+            summary.current_paper_id = paper_key
+            summary.current_paper_title = paper.title
+        try:
+            summary.discovered_papers_count = self._project_paper_count(summary.project_id)
+        except Exception:
+            logger.debug("Unable to count project papers for progress", exc_info=True)
+        if complete:
+            summary.progress_percent = 100
+        elif summary.max_papers_total > 0:
+            ratio = summary.discovered_papers_count / summary.max_papers_total
+            summary.progress_percent = max(1, min(95, int(ratio * 90)))
+        if callback is None:
+            return
+        try:
+            callback(summary)
+        except Exception:
+            logger.exception("Crawl progress callback failed")
 
     async def _neighbors(
         self,

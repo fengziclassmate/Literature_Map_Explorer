@@ -86,6 +86,74 @@ def update_project_status(
         )
 
 
+def create_crawl_run(project_id: str, *, status: str = "queued", stats: dict | None = None) -> str:
+    run_id = str(uuid.uuid4())
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO crawl_runs(run_id, project_id, status, stats_json)
+            VALUES (?, ?, ?, ?)
+            """,
+            (run_id, project_id, status, json.dumps(stats or {}, sort_keys=True)),
+        )
+    return run_id
+
+
+def update_crawl_run(
+    run_id: str,
+    *,
+    status: str | None = None,
+    stats: dict | None = None,
+    error_message: str | None = None,
+    finished: bool = False,
+) -> None:
+    finished_sql = "CURRENT_TIMESTAMP" if finished else "finished_at"
+    with get_connection() as conn:
+        conn.execute(
+            f"""
+            UPDATE crawl_runs
+            SET status = COALESCE(?, status),
+                stats_json = COALESCE(?, stats_json),
+                error_message = ?,
+                finished_at = {finished_sql}
+            WHERE run_id = ?
+            """,
+            (
+                status,
+                json.dumps(stats, sort_keys=True) if stats is not None else None,
+                error_message,
+                run_id,
+            ),
+        )
+
+
+def _crawl_run_from_row(row: sqlite3.Row | None) -> dict | None:
+    if not row:
+        return None
+    data = dict(row)
+    stats_json = data.pop("stats_json") or "{}"
+    try:
+        data["stats"] = json.loads(stats_json)
+    except json.JSONDecodeError:
+        data["stats"] = {}
+    return data
+
+
+def get_latest_crawl_run(project_id: str) -> dict | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT run_id, project_id, status, started_at, finished_at, stats_json, error_message
+            FROM crawl_runs
+            WHERE project_id = ?
+            ORDER BY started_at DESC
+            LIMIT 1
+            """,
+            (project_id,),
+        ).fetchone()
+    return _crawl_run_from_row(row)
+
+
 def list_projects() -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(

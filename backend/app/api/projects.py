@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from app.db.database import (
+    create_crawl_run,
     create_project,
     get_paper_summary,
+    get_latest_crawl_run,
     get_project_report,
     get_project,
     list_project_paper_cards,
@@ -17,6 +20,7 @@ from app.db.database import (
     save_crawl_result,
     save_paper_summary,
     save_project_report,
+    update_crawl_run,
     update_project_status,
     write_project_report_file,
 )
@@ -28,6 +32,7 @@ from app.services.report_generator import ReportGenerator
 from app.services.summarizer import PaperSummarizer
 
 router = APIRouter(prefix="/projects", tags=["projects"])
+logger = logging.getLogger(__name__)
 
 
 class ProjectCreateRequest(BaseModel):
@@ -49,6 +54,94 @@ class ProjectCreateRequest(BaseModel):
 
 class ProjectSummarizeRequest(BaseModel):
     force: bool = False
+
+
+def _project_payload(project: dict) -> dict:
+    payload = dict(project)
+    payload["settings"] = json.loads(payload.pop("settings_json", "{}") or "{}")
+    return payload
+
+
+def _initial_progress(payload: ProjectCreateRequest, *, stage: str = "queued") -> dict:
+    return {
+        "current_stage": stage,
+        "current_paper_id": None,
+        "current_paper_title": None,
+        "discovered_papers_count": 0,
+        "processed_papers_count": 0,
+        "queued_papers_count": 0,
+        "max_papers_total": payload.max_papers_total,
+        "progress_percent": 0,
+        "new_papers_count": 0,
+        "new_edges_count": 0,
+        "failed_requests_count": 0,
+        "skipped_papers_count": 0,
+        "summarized_count": 0,
+        "summary_failed_count": 0,
+        "visited_papers_count": 0,
+        "truncated": False,
+        "errors": [],
+    }
+
+
+async def _run_project_crawl(project_id: str, run_id: str, settings: dict) -> None:
+    payload = ProjectCreateRequest(**settings)
+    crawler = CitationCrawler()
+
+    def record_progress(summary) -> None:
+        update_crawl_run(run_id, status="running", stats=summary.to_dict())
+
+    try:
+        update_crawl_run(run_id, status="running", stats=_initial_progress(payload, stage="resolving_doi"))
+        result = await crawler.crawl_from_doi(
+            payload.seed_doi,
+            max_depth_backward=payload.max_depth_backward,
+            max_depth_forward=payload.max_depth_forward,
+            max_papers_total=payload.max_papers_total,
+            per_paper_limit=payload.per_paper_limit,
+            project_id=project_id,
+            progress_callback=record_progress,
+        )
+        save_crawl_result(project_id=project_id, papers=result.papers, citations=result.citations)
+        update_project_status(
+            project_id,
+            status="complete",
+            paper_count=len(result.papers),
+            edge_count=len(result.citations),
+        )
+        final_stats = result.summary.to_dict() if result.summary else _initial_progress(payload, stage="complete")
+        final_stats["current_stage"] = "complete"
+        final_stats["progress_percent"] = 100
+        update_crawl_run(run_id, status="complete", stats=final_stats, finished=True)
+    except PaperResolutionError as exc:
+        stats = _initial_progress(payload, stage="failed")
+        stats["errors"] = [str(exc)]
+        update_project_status(project_id, status="failed", error_message=str(exc))
+        update_crawl_run(run_id, status="failed", stats=stats, error_message=str(exc), finished=True)
+    except Exception as exc:
+        logger.exception("Project crawl failed", extra={"project_id": project_id, "run_id": run_id})
+        stats = _initial_progress(payload, stage="failed")
+        stats["errors"] = [str(exc)]
+        update_project_status(project_id, status="failed", error_message=str(exc))
+        update_crawl_run(run_id, status="failed", stats=stats, error_message=str(exc), finished=True)
+    finally:
+        await crawler.aclose()
+
+
+@router.post("/async")
+async def start_project_from_doi(payload: ProjectCreateRequest, background_tasks: BackgroundTasks) -> dict:
+    settings = payload.model_dump()
+    name = payload.name or f"DOI {payload.seed_doi}"
+    project_id = create_project(name=name, seed_doi=payload.seed_doi, settings=settings, status="running")
+    run_id = create_crawl_run(project_id, status="queued", stats=_initial_progress(payload))
+    background_tasks.add_task(_run_project_crawl, project_id, run_id, settings)
+    return {
+        "project_id": project_id,
+        "run_id": run_id,
+        "status": "running",
+        "progress_url": f"/projects/{project_id}/status",
+        "crawl_run": get_latest_crawl_run(project_id),
+    }
 
 
 @router.post("")
@@ -97,9 +190,7 @@ async def create_project_from_doi(payload: ProjectCreateRequest) -> dict:
 @router.get("")
 def get_projects() -> list[dict]:
     projects = list_projects()
-    for project in projects:
-        project["settings"] = json.loads(project.pop("settings_json"))
-    return projects
+    return [_project_payload(project) for project in projects]
 
 
 @router.get("/{project_id}")
@@ -107,8 +198,18 @@ def get_project_detail(project_id: str) -> dict:
     project = get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    project["settings"] = json.loads(project.pop("settings_json"))
-    return project
+    return _project_payload(project)
+
+
+@router.get("/{project_id}/status")
+def get_project_status(project_id: str) -> dict:
+    project = get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {
+        "project": _project_payload(project),
+        "crawl_run": get_latest_crawl_run(project_id),
+    }
 
 
 @router.get("/{project_id}/paper-cards")

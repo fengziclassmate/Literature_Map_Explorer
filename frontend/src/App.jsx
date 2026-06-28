@@ -17,6 +17,7 @@ import {
   RefreshCcw,
   Search,
   Sparkles,
+  Upload,
 } from 'lucide-react';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://127.0.0.1:8000';
@@ -130,6 +131,8 @@ function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [isReporting, setIsReporting] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
+  const [accessLinks, setAccessLinks] = useState(null);
+  const [accessBusy, setAccessBusy] = useState(false);
   const cyRef = useRef(null);
   const graphRef = useRef(null);
   const pollTokenRef = useRef(0);
@@ -152,6 +155,32 @@ function App() {
     restoredProjectRef.current = true;
     loadRecentProjects({ restoreLatest: true });
   }, []);
+
+  useEffect(() => {
+    const paperKey = selectedCard?.paper?.paper_key;
+    if (!paperKey) {
+      setAccessLinks(null);
+      return;
+    }
+
+    let active = true;
+    setAccessBusy(true);
+    request(`/papers/${paperApiId(paperKey)}/access-links`)
+      .then((payload) => {
+        if (active) setAccessLinks(payload);
+      })
+      .catch((err) => {
+        console.warn('Failed to load paper access links', err);
+        if (active) setAccessLinks(null);
+      })
+      .finally(() => {
+        if (active) setAccessBusy(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedCard?.paper?.paper_key]);
 
   useEffect(() => {
     if (!graphRef.current) return;
@@ -373,6 +402,42 @@ function App() {
     }
   }
 
+  async function uploadSelectedPdf(file) {
+    const paperKey = selectedCard?.paper?.paper_key;
+    if (!paperKey || !file) return;
+    setPdfBusy(true);
+    setError('');
+    setStatus('正在导入本地 PDF');
+    try {
+      const response = await fetch(`${API_BASE}/papers/${paperApiId(paperKey)}/pdf/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/pdf' },
+        body: file,
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        let detail = text;
+        try {
+          const payload = JSON.parse(text);
+          detail = payload.detail || text;
+        } catch {
+          detail = text;
+        }
+        throw new Error(detail || `HTTP ${response.status}`);
+      }
+      const pdf = await response.json();
+      setPaperCards((cards) => cards.map((card) => (
+        card.paper?.paper_key === paperKey ? { ...card, pdf } : card
+      )));
+      setStatus('PDF 已导入');
+    } catch (err) {
+      setError(err.message || String(err));
+      setStatus('PDF 导入失败');
+    } finally {
+      setPdfBusy(false);
+    }
+  }
+
   const nodeCount = graph.nodes?.length || 0;
   const edgeCount = graph.edges?.length || 0;
   const cardCount = paperCards.filter((card) => card.summary).length;
@@ -493,7 +558,14 @@ function App() {
         </section>
 
         <aside className="paper-desk" aria-label="Paper Card">
-          <PaperCard card={selectedCard} onFetchPdf={fetchSelectedPdf} pdfBusy={pdfBusy} />
+          <PaperCard
+            card={selectedCard}
+            accessBusy={accessBusy}
+            accessLinks={accessLinks}
+            onFetchPdf={fetchSelectedPdf}
+            onUploadPdf={uploadSelectedPdf}
+            pdfBusy={pdfBusy}
+          />
         </aside>
       </section>
 
@@ -617,7 +689,14 @@ function Metric({ icon, label, value }) {
   );
 }
 
-function PaperCard({ card, onFetchPdf, pdfBusy = false }) {
+function PaperCard({
+  card,
+  accessBusy = false,
+  accessLinks = null,
+  onFetchPdf,
+  onUploadPdf,
+  pdfBusy = false,
+}) {
   const paper = card?.paper;
   const summary = card?.summary;
   if (!paper) {
@@ -649,7 +728,15 @@ function PaperCard({ card, onFetchPdf, pdfBusy = false }) {
         <span>置信度 {formatNumber(summary?.summary_confidence)}</span>
         <span>{summary?.summary_level || '未总结'}</span>
       </div>
-      <PdfPanel paper={paper} pdf={card?.pdf} onFetchPdf={onFetchPdf} pdfBusy={pdfBusy} />
+      <PdfPanel
+        paper={paper}
+        pdf={card?.pdf}
+        accessBusy={accessBusy}
+        accessLinks={accessLinks}
+        onFetchPdf={onFetchPdf}
+        onUploadPdf={onUploadPdf}
+        pdfBusy={pdfBusy}
+      />
       <SummaryField label="一句话总结" value={summary?.one_sentence_summary} strong />
       <SummaryField label="研究问题" value={summary?.research_problem} />
       <SummaryField label="数据来源" value={summary?.data_sources} />
@@ -663,11 +750,12 @@ function PaperCard({ card, onFetchPdf, pdfBusy = false }) {
   );
 }
 
-function PdfPanel({ paper, pdf, onFetchPdf, pdfBusy }) {
+function PdfPanel({ paper, pdf, accessBusy, accessLinks, onFetchPdf, onUploadPdf, pdfBusy }) {
   const paperKey = paper?.paper_key || '';
   const fileUrl = `${API_BASE}/papers/${paperApiId(paperKey)}/pdf/file`;
   const canFetch = Boolean(paper?.doi || paper?.pdf_url);
   const downloaded = pdf?.status === 'downloaded';
+  const links = accessLinks?.links || [];
   const statusText = {
     downloaded: `已保存${pdf?.source ? ` · ${pdf.source}` : ''}`,
     not_found: '未找到开放 PDF',
@@ -687,6 +775,20 @@ function PdfPanel({ paper, pdf, onFetchPdf, pdfBusy }) {
           {pdfBusy ? <Loader2 className="spin" size={15} /> : <FileDown size={15} />}
           <span>{pdfBusy ? '获取中' : '获取开放 PDF'}</span>
         </button>
+        <label className={`upload-action ${pdfBusy ? 'disabled' : ''}`}>
+          {pdfBusy ? <Loader2 className="spin" size={15} /> : <Upload size={15} />}
+          <span>上传已授权 PDF</span>
+          <input
+            type="file"
+            accept="application/pdf"
+            disabled={pdfBusy}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) onUploadPdf?.(file);
+              event.target.value = '';
+            }}
+          />
+        </label>
         {downloaded && (
           <a href={fileUrl} target="_blank" rel="noreferrer">
             <ExternalLink size={15} />
@@ -694,6 +796,19 @@ function PdfPanel({ paper, pdf, onFetchPdf, pdfBusy }) {
           </a>
         )}
       </div>
+      <div className="access-links">
+        {accessBusy && <span className="access-loading">正在读取授权访问入口</span>}
+        {!accessBusy && links.map((link) => (
+          <a href={link.url} target="_blank" rel="noreferrer" key={`${link.kind}-${link.url}`}>
+            <ExternalLink size={14} />
+            <span>{link.label}</span>
+          </a>
+        ))}
+        {!accessBusy && !links.length && <span className="access-loading">暂无 DOI 或机构访问入口</span>}
+      </div>
+      <small className="access-note">
+        仅支持开放获取、机构授权访问和本地导入；不接入 Sci-Hub、LibGen、Tor 或绕过访问限制的下载方式。
+      </small>
     </section>
   );
 }

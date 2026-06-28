@@ -49,6 +49,12 @@ class Settings:
     api_cache_ttl_seconds: int = _int_env("LME_API_CACHE_TTL_SECONDS", 60 * 60 * 24)
     pdf_download_dir: str = os.getenv("LME_PDF_DOWNLOAD_DIR", "./downloads/pdfs")
     unpaywall_email: str = os.getenv("LME_UNPAYWALL_EMAIL", os.getenv("LME_CONTACT_EMAIL", "research@example.local"))
+    institution_name: str = os.getenv("LME_INSTITUTION_NAME", "")
+    ezproxy_url_prefix: str = os.getenv("LME_EZPROXY_URL_PREFIX", "")
+    library_resolver_url: str = os.getenv("LME_LIBRARY_RESOLVER_URL", "")
+    carsi_login_url: str = os.getenv("LME_CARSI_LOGIN_URL", "")
+    webvpn_url: str = os.getenv("LME_WEBVPN_URL", "")
+    institution_login_url: str = os.getenv("LME_INSTITUTION_LOGIN_URL", "")
 
     openalex_rate_limit_per_second: float = _float_env("LME_OPENALEX_RPS", 8.0)
     semantic_scholar_rate_limit_per_second: float = _float_env("LME_SEMANTIC_SCHOLAR_RPS", 1.0)

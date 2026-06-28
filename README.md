@@ -80,6 +80,12 @@ Environment variables:
 - `LME_CONTACT_EMAIL`: optional OpenAlex mailto parameter
 - `LME_UNPAYWALL_EMAIL`: email used for Unpaywall open-access PDF lookup
 - `LME_PDF_DOWNLOAD_DIR`: local directory for saved open-access PDFs, defaults to `./downloads/pdfs`
+- `LME_INSTITUTION_NAME`: optional institution label shown in the PDF access panel
+- `LME_LIBRARY_RESOLVER_URL`: optional library link resolver. Supports `{doi}` or appends `?doi=...`
+- `LME_EZPROXY_URL_PREFIX`: optional EZProxy prefix. Supports `{url}` or appends the encoded publisher URL
+- `LME_CARSI_LOGIN_URL`: optional CARSI login URL shown as an authorized-access handoff
+- `LME_WEBVPN_URL`: optional WebVPN login URL shown as an authorized-access handoff
+- `LME_INSTITUTION_LOGIN_URL`: optional browser-based institution login or library portal URL
 - `SEMANTIC_SCHOLAR_API_KEY`: optional Semantic Scholar API key
 - `LME_API_MAX_RETRIES`: defaults to `3`
 - `LME_API_CACHE_TTL_SECONDS`: defaults to one day
@@ -91,7 +97,10 @@ Environment variables:
 - Current seed input: DOI only.
 - Deduplication priority: DOI, then OpenAlex ID, then Semantic Scholar ID, then normalized title.
 - Citation edge direction: `source cites target`.
-- PDF fetching is open-access only by default. It uses existing metadata PDF URLs plus OpenAlex OA, Semantic Scholar OA, and Unpaywall. It intentionally does not enable Sci-Hub, LibGen, Tor, WebVPN, CARSI, EZProxy, or browser-based institutional login in the core app.
+- Automatic PDF fetching is open-access only. It uses existing metadata PDF URLs plus OpenAlex OA, Semantic Scholar OA, and Unpaywall.
+- The Paper Card can also show authorized access handoff links for DOI, publisher pages, library resolvers, EZProxy, CARSI, WebVPN, and institution login portals. These links require the user to authenticate normally.
+- Users can upload PDFs they have already obtained through authorized access. Uploaded files are stored locally in `LME_PDF_DOWNLOAD_DIR` and linked to the corresponding Paper Card.
+- The app intentionally does not enable Sci-Hub, LibGen, Tor, credential automation, or any mechanism that bypasses publisher or institution access controls.
 - Crawl controls:
   - `max_depth_backward`: reference expansion depth
   - `max_depth_forward`: citing-paper expansion depth
@@ -129,6 +138,15 @@ Fetch open-access PDF status or trigger a safe PDF download for a paper:
 ```bash
 curl http://127.0.0.1:8000/papers/<paper_id>/pdf
 curl -X POST http://127.0.0.1:8000/papers/<paper_id>/pdf/download
+```
+
+Get lawful access links or upload a locally authorized PDF:
+
+```bash
+curl http://127.0.0.1:8000/papers/<paper_id>/access-links
+curl -X POST http://127.0.0.1:8000/papers/<paper_id>/pdf/upload \
+  -H "Content-Type: application/pdf" \
+  --data-binary @paper.pdf
 ```
 
 Export:

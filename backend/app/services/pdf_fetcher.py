@@ -45,7 +45,7 @@ class SafePdfFetcher:
 
     This intentionally mirrors the safe subset of scansci-pdf's source strategy:
     project metadata, OpenAlex OA, Semantic Scholar OA, and Unpaywall. It does
-    not call Sci-Hub, LibGen, Tor, WebVPN, CARSI, EZProxy, or browser login.
+    not call Sci-Hub, LibGen, Tor, or automate restricted institutional login.
     """
 
     def __init__(
